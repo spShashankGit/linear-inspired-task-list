@@ -1,0 +1,162 @@
+:root {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+    margin: 0;
+}
+
+.kanban-page {
+    min-height: 100vh;
+    padding: 1.5rem;
+    color: var(--text-primary);
+    background: var(--page-bg);
+    transition: background-color 140ms ease, color 140ms ease;
+}
+
+.theme-light {
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --page-bg: #f7f8fb;
+    --surface-bg: #ffffff;
+    --surface-border: #e5e7eb;
+    --chip-bg: #eef2ff;
+    --chip-text: #3730a3;
+    --card-bg: #fcfcff;
+    --button-bg: #ffffff;
+    --button-hover-bg: #f3f4f6;
+    --button-border: #d1d5db;
+    --shadow-color: rgb(0 0 0 / 6%);
+}
+
+.theme-dark {
+    --text-primary: #e5e7eb;
+    --text-secondary: #9ca3af;
+    --page-bg: #111827;
+    --surface-bg: #1f2937;
+    --surface-border: #374151;
+    --chip-bg: #312e81;
+    --chip-text: #c7d2fe;
+    --card-bg: #111827;
+    --button-bg: #1f2937;
+    --button-hover-bg: #374151;
+    --button-border: #4b5563;
+    --shadow-color: rgb(0 0 0 / 25%);
+}
+
+.kanban-header h1 {
+    margin: 0;
+    font-size: 1.75rem;
+}
+
+.kanban-header p {
+    margin-top: 0.4rem;
+    color: var(--text-secondary);
+}
+
+.kanban-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.kanban-grid {
+    margin-top: 1rem;
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(4, minmax(220px, 1fr));
+}
+
+.kanban-column {
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    background: var(--surface-bg);
+    padding: 0.8rem;
+    box-shadow: 0 1px 2px var(--shadow-color);
+}
+
+.column-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.8rem;
+}
+
+.column-head h2 {
+    font-size: 1rem;
+    margin: 0;
+}
+
+.column-head span {
+    border-radius: 999px;
+    background: var(--chip-bg);
+    color: var(--chip-text);
+    padding: 0.1rem 0.55rem;
+    font-size: 0.8rem;
+}
+
+.column-body {
+    display: grid;
+    gap: 0.7rem;
+}
+
+.issue-card {
+    border: 1px solid var(--surface-border);
+    border-radius: 10px;
+    padding: 0.7rem;
+    background: var(--card-bg);
+}
+
+.issue-id {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.issue-card h3 {
+    margin: 0.45rem 0;
+    font-size: 0.95rem;
+}
+
+.issue-owner {
+    margin: 0 0 0.6rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.issue-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.issue-actions button {
+    border: 1px solid var(--button-border);
+    border-radius: 8px;
+    background: var(--button-bg);
+    color: var(--text-primary);
+    padding: 0.35rem 0.55rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.issue-actions button:hover {
+    background: var(--button-hover-bg);
+}
+
+@media (max-width: 1100px) {
+    .kanban-grid {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+    }
+}
+
+@media (max-width: 700px) {
+    .kanban-header {
+        align-items: flex-start;
+    }
+
+    .kanban-grid {
+        grid-template-columns: 1fr;
+    }
+}
