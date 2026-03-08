@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+apps/*/node_modules/
+
+# build output
+apps/*/dist/
+dist/
+
+# test artifacts
+apps/*/test-results/
+coverage/
+
+# local tools
+.codex/
+
+# env files
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+
+# OS/editor
+.DS_Store
+.vscode/
