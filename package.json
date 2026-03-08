@@ -3,7 +3,8 @@
     "private": true,
     "type": "module",
     "workspaces": [
-        "apps/*"
+        "apps/*",
+        "packages/*"
     ],
     "scripts": {
         "dev": "pnpm --parallel --filter @app/web --filter @app/api run dev",
@@ -11,5 +12,13 @@
         "dev:web": "pnpm --filter @app/web dev",
         "build:api": "pnpm --filter @app/api build",
         "build:web": "pnpm --filter @app/web build"
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.21.0",
+        "eslint": "^9.21.0",
+        "eslint-plugin-unicorn": "^57.0.0",
+        "prettier": "^3.5.3",
+        "typescript": "^5.8.2",
+        "typescript-eslint": "^8.24.0"
     }
 }
