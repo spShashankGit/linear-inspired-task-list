@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose an enhancement for the app
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user problem are we solving?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the UX/API behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: keyboard
+    attributes:
+      label: Keyboard-first impact
+      description: Which shortcuts/flows are affected?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Provide a testable checklist.
+    validations:
+      required: true

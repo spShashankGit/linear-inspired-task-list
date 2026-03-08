@@ -1,0 +1,105 @@
+name: Deploy GKE
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: "demo"
+      image_tag:
+        description: "Optional image tag override"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GKE_CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME }}
+  ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
+  K8S_NAMESPACE: linear-demo
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker ${GCP_REGION}-docker.pkg.dev --quiet
+
+      - name: Resolve image tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "IMAGE_TAG=${{ github.event.inputs.image_tag }}" >> "$GITHUB_ENV"
+          else
+            echo "IMAGE_TAG=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and push API image
+        run: |
+          API_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api:${IMAGE_TAG}"
+          docker build -f apps/api/Dockerfile -t "$API_IMAGE" .
+          docker push "$API_IMAGE"
+          echo "API_IMAGE=$API_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build and push Web image
+        run: |
+          WEB_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/web:${IMAGE_TAG}"
+          docker build -f apps/web/Dockerfile -t "$WEB_IMAGE" .
+          docker push "$WEB_IMAGE"
+          echo "WEB_IMAGE=$WEB_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT_ID"
+
+      - name: Install envsubst
+        run: sudo apt-get update && sudo apt-get install -y gettext-base
+
+      - name: Ensure namespace and secrets exist
+        env:
+          SESSION_COOKIE_SECRET: ${{ secrets.SESSION_COOKIE_SECRET }}
+        run: |
+          kubectl create namespace "$K8S_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "$K8S_NAMESPACE" create secret generic app-secrets \
+            --from-literal=session_cookie_secret="$SESSION_COOKIE_SECRET" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Render manifests
+        run: |
+          mkdir -p /tmp/k8s-rendered
+          export API_IMAGE WEB_IMAGE
+          envsubst < infra/k8s/api-deployment.yaml > /tmp/k8s-rendered/api-deployment.yaml
+          envsubst < infra/k8s/web-deployment.yaml > /tmp/k8s-rendered/web-deployment.yaml
+          cp infra/k8s/namespace.yaml /tmp/k8s-rendered/namespace.yaml
+          cp infra/k8s/configmap-nginx.yaml /tmp/k8s-rendered/configmap-nginx.yaml
+          cp infra/k8s/api-service.yaml /tmp/k8s-rendered/api-service.yaml
+          cp infra/k8s/web-service.yaml /tmp/k8s-rendered/web-service.yaml
+          cp infra/k8s/ingress.yaml /tmp/k8s-rendered/ingress.yaml
+
+      - name: Apply manifests
+        run: kubectl apply -f /tmp/k8s-rendered
+
+      - name: Show rollout status
+        run: |
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/api --timeout=180s
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/web --timeout=180s

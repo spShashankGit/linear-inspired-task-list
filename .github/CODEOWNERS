@@ -1,0 +1,8 @@
+# Default reviewers for all code in this repository
+* @spShashankGit
+
+# App-specific ownership
+/apps/api/ @spShashankGit
+/apps/web/ @spShashankGit
+/infra/ @spShashankGit
+/.github/ @spShashankGit
