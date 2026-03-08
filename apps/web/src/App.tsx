@@ -1,9 +1,16 @@
 import React from 'react';
 import {
-    getNudgeAuditTrail,
-    sendStatusNudge,
-    type IssueStatusNudgeRequested
-} from './nudgeService';
+    createIssue as createIssueMutation,
+    fetchBoard,
+    fetchIssueDetail,
+    fetchNotifications,
+    markNudgesRead,
+    moveIssueStatus,
+    nudgeIssueOwner,
+    postIssueComment,
+    type ApiNudgeEvent,
+    type ApiNotificationItem
+} from './apiClient';
 
 type IssueStatus = 'todo' | 'in_progress' | 'parked' | 'done';
 
@@ -21,6 +28,8 @@ type IssueComment = {
     body: string;
     createdAt: string;
 };
+
+type IssueStatusNudgeRequested = ApiNudgeEvent;
 
 type CommunicationThreadItem = {
     id: string;
@@ -46,9 +55,6 @@ const seedIssues: Issue[] = [
     { id: 'KAN-104', title: 'Create audit event schema', owner: 'Nina', status: 'done' }
 ];
 
-const ISSUE_STORAGE_KEY = 'kanban.issues.v1';
-const NUDGE_READ_STORAGE_KEY = 'kanban.nudge-read.v1';
-const ISSUE_COMMENT_STORAGE_KEY = 'kanban.issue-comments.v1';
 
 function isTypingTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) {
@@ -74,36 +80,6 @@ function getPreviousStatus(currentStatus: IssueStatus): IssueStatus {
     }
 
     return statusOrder[currentIndex - 1]!;
-}
-
-function moveIssue(issues: Issue[], issueId: string, targetStatus: IssueStatus): Issue[] {
-    return issues.map((issue): Issue => {
-        if (issue.id !== issueId) {
-            return issue;
-        }
-
-        return { ...issue, status: targetStatus };
-    });
-}
-
-function moveIssuesToNextBucket(issues: Issue[], issueIds: Set<string>): Issue[] {
-    return issues.map((issue): Issue => {
-        if (!issueIds.has(issue.id)) {
-            return issue;
-        }
-
-        return { ...issue, status: getNextStatus(issue.status) };
-    });
-}
-
-function moveIssuesToPreviousBucket(issues: Issue[], issueIds: Set<string>): Issue[] {
-    return issues.map((issue): Issue => {
-        if (!issueIds.has(issue.id)) {
-            return issue;
-        }
-
-        return { ...issue, status: getPreviousStatus(issue.status) };
-    });
 }
 
 function reorderIssueWithinBucket(issues: Issue[], issueId: string, direction: 'up' | 'down'): Issue[] {
@@ -179,62 +155,8 @@ function moveIssueByDrop(
     return statusOrder.flatMap((status): Issue[] => byStatus.get(status) ?? []);
 }
 
-function getNextIssueId(issues: Issue[]): string {
-    const numericIds = issues
-        .map((issue): number => {
-            const match = issue.id.match(/KAN-(\d+)/);
-            if (!match) {
-                return 0;
-            }
-
-            const numericPortion = match.at(1);
-            if (!numericPortion) {
-                return 0;
-            }
-
-            return Number.parseInt(numericPortion, 10);
-        })
-        .filter((value): boolean => Number.isFinite(value));
-
-    const currentMax = numericIds.length === 0 ? 100 : Math.max(...numericIds);
-    return `KAN-${currentMax + 1}`;
-}
-
 export function App(): React.ReactElement {
-    const [issues, setIssues] = React.useState<Issue[]>((): Issue[] => {
-        const storedValue = window.localStorage.getItem(ISSUE_STORAGE_KEY);
-        if (!storedValue) {
-            return seedIssues;
-        }
-
-        try {
-            const parsedValue: unknown = JSON.parse(storedValue);
-            if (!Array.isArray(parsedValue)) {
-                return seedIssues;
-            }
-
-            const parsedIssues = parsedValue.filter((item): item is Issue => {
-                if (typeof item !== 'object' || item === null) {
-                    return false;
-                }
-
-                const issue = item as Partial<Issue>;
-                return (
-                    typeof issue.id === 'string' &&
-                    typeof issue.title === 'string' &&
-                    typeof issue.owner === 'string' &&
-                    (issue.status === 'todo' ||
-                        issue.status === 'in_progress' ||
-                        issue.status === 'parked' ||
-                        issue.status === 'done')
-                );
-            });
-
-            return parsedIssues.length > 0 ? parsedIssues : seedIssues;
-        } catch {
-            return seedIssues;
-        }
-    });
+    const [issues, setIssues] = React.useState<Issue[]>(seedIssues);
     const [selectedIssueIds, setSelectedIssueIds] = React.useState<Set<string>>(new Set());
 
     const [isCommandModeOpen, setIsCommandModeOpen] = React.useState<boolean>(false);
@@ -253,68 +175,11 @@ export function App(): React.ReactElement {
     const [nudgeFeedback, setNudgeFeedback] = React.useState<string>('');
     const [latestNudgeEvent, setLatestNudgeEvent] = React.useState<IssueStatusNudgeRequested | null>(null);
     const [commentFeedback, setCommentFeedback] = React.useState<string>('');
-    const [issueComments, setIssueComments] = React.useState<Record<string, IssueComment[]>>((): Record<string, IssueComment[]> => {
-        const raw = window.localStorage.getItem(ISSUE_COMMENT_STORAGE_KEY);
-        if (!raw) {
-            return {};
-        }
-
-        try {
-            const parsed = JSON.parse(raw) as unknown;
-            if (typeof parsed !== 'object' || parsed === null) {
-                return {};
-            }
-
-            const record = parsed as Record<string, unknown>;
-            const next: Record<string, IssueComment[]> = {};
-            for (const [issueId, value] of Object.entries(record)) {
-                if (!Array.isArray(value)) {
-                    continue;
-                }
-
-                next[issueId] = value.filter((entry): entry is IssueComment => {
-                    if (typeof entry !== 'object' || entry === null) {
-                        return false;
-                    }
-                    const maybe = entry as Partial<IssueComment>;
-                    return (
-                        typeof maybe.id === 'string' &&
-                        typeof maybe.issueId === 'string' &&
-                        typeof maybe.author === 'string' &&
-                        typeof maybe.body === 'string' &&
-                        typeof maybe.createdAt === 'string'
-                    );
-                });
-            }
-
-            return next;
-        } catch {
-            return {};
-        }
-    });
-    const [nudgeAuditEvents, setNudgeAuditEvents] = React.useState<IssueStatusNudgeRequested[]>((): IssueStatusNudgeRequested[] =>
-        getNudgeAuditTrail(),
-    );
+    const [issueComments, setIssueComments] = React.useState<Record<string, IssueComment[]>>({});
+    const [openedIssueNudges, setOpenedIssueNudges] = React.useState<IssueStatusNudgeRequested[]>([]);
     const [currentViewer, setCurrentViewer] = React.useState<string>('Shashank');
     const [isNotificationOpen, setIsNotificationOpen] = React.useState<boolean>(false);
-    const [readNudgeIds, setReadNudgeIds] = React.useState<Set<string>>((): Set<string> => {
-        const raw = window.localStorage.getItem(NUDGE_READ_STORAGE_KEY);
-        if (!raw) {
-            return new Set<string>();
-        }
-
-        try {
-            const parsed = JSON.parse(raw) as unknown;
-            if (!Array.isArray(parsed)) {
-                return new Set<string>();
-            }
-            return new Set<string>(
-                parsed.filter((item): item is string => typeof item === 'string'),
-            );
-        } catch {
-            return new Set<string>();
-        }
-    });
+    const [notificationItems, setNotificationItems] = React.useState<ApiNotificationItem[]>([]);
 
     const commandInputReference = React.useRef<HTMLInputElement | null>(null);
     const createTitleInputReference = React.useRef<HTMLInputElement | null>(null);
@@ -350,19 +215,12 @@ export function App(): React.ReactElement {
     }, [issues]);
 
     const notificationsForViewer = React.useMemo((): IssueStatusNudgeRequested[] => {
-        return nudgeAuditEvents.filter((event): boolean => event.owner === currentViewer);
-    }, [currentViewer, nudgeAuditEvents]);
+        return notificationItems.map((item): IssueStatusNudgeRequested => item.event);
+    }, [notificationItems]);
 
     const unreadNotificationCount = React.useMemo((): number => {
-        return notificationsForViewer.filter((event): boolean => !readNudgeIds.has(event.id)).length;
-    }, [notificationsForViewer, readNudgeIds]);
-
-    const openedIssueNudges = React.useMemo((): IssueStatusNudgeRequested[] => {
-        if (!openedIssueId) {
-            return [];
-        }
-        return nudgeAuditEvents.filter((event): boolean => event.issueId === openedIssueId);
-    }, [nudgeAuditEvents, openedIssueId]);
+        return notificationItems.filter((item): boolean => item.unread).length;
+    }, [notificationItems]);
 
     const openedIssueComments = React.useMemo((): IssueComment[] => {
         if (!openedIssueId) {
@@ -395,22 +253,59 @@ export function App(): React.ReactElement {
     }, [openedIssueComments, openedIssueNudges]);
 
     React.useEffect((): void => {
-        window.localStorage.setItem(ISSUE_STORAGE_KEY, JSON.stringify(issues));
-    }, [issues]);
-
-    React.useEffect((): void => {
-        window.localStorage.setItem(NUDGE_READ_STORAGE_KEY, JSON.stringify(Array.from(readNudgeIds)));
-    }, [readNudgeIds]);
-
-    React.useEffect((): void => {
-        window.localStorage.setItem(ISSUE_COMMENT_STORAGE_KEY, JSON.stringify(issueComments));
-    }, [issueComments]);
-
-    React.useEffect((): void => {
         if (activeResultIndex >= filteredIssues.length) {
             setActiveResultIndex(0);
         }
     }, [activeResultIndex, filteredIssues.length]);
+
+    const refreshBoard = React.useCallback(async (): Promise<void> => {
+        try {
+            const nextIssues = await fetchBoard();
+            setIssues(nextIssues);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'unknown error';
+            setLastShortcutEvent(`Board refresh failed: ${message}`);
+        }
+    }, []);
+
+    const refreshNotifications = React.useCallback(async (viewer: string): Promise<void> => {
+        try {
+            const items = await fetchNotifications(viewer);
+            setNotificationItems(items);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'unknown error';
+            setLastShortcutEvent(`Notification refresh failed: ${message}`);
+        }
+    }, []);
+
+    const refreshIssueDetail = React.useCallback(
+        async (issueId: string): Promise<void> => {
+            try {
+                const detail = await fetchIssueDetail(issueId);
+                if (!detail) {
+                    return;
+                }
+
+                setIssueComments((current): Record<string, IssueComment[]> => {
+                    return { ...current, [issueId]: detail.comments };
+                });
+                setOpenedIssueNudges(detail.nudges);
+                setLatestNudgeEvent(detail.nudges[0] ?? null);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'unknown error';
+                setLastShortcutEvent(`Issue detail refresh failed: ${message}`);
+            }
+        },
+        [],
+    );
+
+    React.useEffect((): void => {
+        void refreshBoard();
+    }, [refreshBoard]);
+
+    React.useEffect((): void => {
+        void refreshNotifications(currentViewer);
+    }, [currentViewer, refreshNotifications]);
 
     const closeCommandMode = React.useCallback((reason: string): void => {
         setIsCommandModeOpen(false);
@@ -424,8 +319,9 @@ export function App(): React.ReactElement {
         setCommentDraft('');
         setCommentFeedback('');
         setNudgeFeedback('');
+        void refreshIssueDetail(issueId);
         setLastShortcutEvent(`Opened issue detail (${issueId})`);
-    }, []);
+    }, [refreshIssueDetail]);
 
     const openCreateModal = React.useCallback((reason: string): void => {
         setIsCreateModalOpen(true);
@@ -433,21 +329,23 @@ export function App(): React.ReactElement {
         setLastShortcutEvent(reason);
     }, []);
 
-    const openIssueFromNotification = React.useCallback((event: IssueStatusNudgeRequested): void => {
-        setReadNudgeIds((current): Set<string> => {
-            const next = new Set(current);
-            next.add(event.id);
-            return next;
-        });
-        setIsNotificationOpen(false);
-        openIssueDetail(event.issueId);
-        setLastShortcutEvent(`Opened nudged issue (${event.issueId}) from notifications`);
-        window.requestAnimationFrame((): void => {
-            commentInputReference.current?.focus();
-        });
-    }, [openIssueDetail]);
+    const openIssueFromNotification = React.useCallback(async (event: IssueStatusNudgeRequested): Promise<void> => {
+        try {
+            await markNudgesRead({ viewer: currentViewer, nudgeIds: [event.id] });
+            await refreshNotifications(currentViewer);
+            setIsNotificationOpen(false);
+            openIssueDetail(event.issueId);
+            setLastShortcutEvent(`Opened nudged issue (${event.issueId}) from notifications`);
+            window.requestAnimationFrame((): void => {
+                commentInputReference.current?.focus();
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'unknown error';
+            setLastShortcutEvent(`Failed to open notification: ${message}`);
+        }
+    }, [currentViewer, openIssueDetail, refreshNotifications]);
 
-    const submitComment = React.useCallback((): void => {
+    const submitComment = React.useCallback(async (): Promise<void> => {
         if (!openedIssueId) {
             return;
         }
@@ -458,36 +356,30 @@ export function App(): React.ReactElement {
             return;
         }
 
-        const nextComment: IssueComment = {
-            id: `comment_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        await postIssueComment({
             issueId: openedIssueId,
             author: currentViewer,
-            body,
-            createdAt: new Date().toISOString()
-        };
-
-        setIssueComments((current): Record<string, IssueComment[]> => {
-            const existing = current[openedIssueId] ?? [];
-            return {
-                ...current,
-                [openedIssueId]: [nextComment, ...existing]
-            };
+            body
         });
+        await refreshIssueDetail(openedIssueId);
         setCommentDraft('');
         setCommentFeedback('Comment posted.');
         setLastShortcutEvent(`Posted status update comment (${openedIssueId})`);
-    }, [commentDraft, currentViewer, openedIssueId]);
+    }, [commentDraft, currentViewer, openedIssueId, refreshIssueDetail]);
 
     const runMoveShortcut = React.useCallback(
-        (direction: 'next' | 'previous', reason: string): void => {
+        async (direction: 'next' | 'previous', reason: string): Promise<void> => {
             if (selectedIssueIds.size > 0) {
-                setIssues((currentIssues): Issue[] => {
-                    if (direction === 'next') {
-                        return moveIssuesToNextBucket(currentIssues, selectedIssueIds);
-                    }
-
-                    return moveIssuesToPreviousBucket(currentIssues, selectedIssueIds);
-                });
+                const targets = issues.filter((issue): boolean => selectedIssueIds.has(issue.id));
+                await Promise.all(
+                    targets.map(async (issue): Promise<void> => {
+                        await moveIssueStatus({
+                            issueId: issue.id,
+                            status: direction === 'next' ? getNextStatus(issue.status) : getPreviousStatus(issue.status),
+                        });
+                    }),
+                );
+                await refreshBoard();
                 setLastShortcutEvent(
                     `Moved ${selectedIssueIds.size} selected issue(s) to ${direction} bucket (${reason})`,
                 );
@@ -497,15 +389,13 @@ export function App(): React.ReactElement {
             if (isCommandModeOpen && filteredIssues.length > 0) {
                 const issueToMove = filteredIssues[activeResultIndex] ?? filteredIssues[0];
                 if (issueToMove) {
-                    setIssues((currentIssues): Issue[] => {
-                        return moveIssue(
-                            currentIssues,
-                            issueToMove.id,
-                            direction === 'next'
-                                ? getNextStatus(issueToMove.status)
-                                : getPreviousStatus(issueToMove.status),
-                        );
+                    await moveIssueStatus({
+                        issueId: issueToMove.id,
+                        status: direction === 'next'
+                            ? getNextStatus(issueToMove.status)
+                            : getPreviousStatus(issueToMove.status),
                     });
+                    await refreshBoard();
                     setLastShortcutEvent(
                         `Moved highlighted issue (${issueToMove.id}) to ${direction} bucket (${reason})`,
                     );
@@ -515,7 +405,7 @@ export function App(): React.ReactElement {
 
             setLastShortcutEvent(`Move ignored: no selected issue (${reason})`);
         },
-        [activeResultIndex, filteredIssues, isCommandModeOpen, selectedIssueIds],
+        [activeResultIndex, filteredIssues, isCommandModeOpen, issues, refreshBoard, selectedIssueIds],
     );
 
     const runReorderShortcut = React.useCallback(
@@ -601,13 +491,13 @@ export function App(): React.ReactElement {
 
             if (event.altKey && code === 'KeyN') {
                 event.preventDefault();
-                runMoveShortcut('next', 'Option + N');
+                void runMoveShortcut('next', 'Option + N');
                 return;
             }
 
             if (event.altKey && code === 'KeyB') {
                 event.preventDefault();
-                runMoveShortcut('previous', 'Option + B');
+                void runMoveShortcut('previous', 'Option + B');
                 return;
             }
 
@@ -667,13 +557,13 @@ export function App(): React.ReactElement {
 
                 if (key === 'n') {
                     event.preventDefault();
-                    runMoveShortcut('next', 'Command mode + n');
+                    void runMoveShortcut('next', 'Command mode + n');
                     return;
                 }
 
                 if (key === 'b') {
                     event.preventDefault();
-                    runMoveShortcut('previous', 'Command mode + b');
+                    void runMoveShortcut('previous', 'Command mode + b');
                     return;
                 }
             }
@@ -690,13 +580,13 @@ export function App(): React.ReactElement {
 
             if (key === 'n' && !event.altKey && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault();
-                runMoveShortcut('next', 'Global n');
+                void runMoveShortcut('next', 'Global n');
                 return;
             }
 
             if (key === 'b' && !event.altKey && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault();
-                runMoveShortcut('previous', 'Global b');
+                void runMoveShortcut('previous', 'Global b');
             }
         };
 
@@ -750,9 +640,9 @@ export function App(): React.ReactElement {
             return;
         }
 
-        const lastForIssue = nudgeAuditEvents.find((event): boolean => event.issueId === openedIssueId) ?? null;
+        const lastForIssue = openedIssueNudges.find((event): boolean => event.issueId === openedIssueId) ?? null;
         setLatestNudgeEvent(lastForIssue);
-    }, [nudgeAuditEvents, openedIssueId]);
+    }, [openedIssueId, openedIssueNudges]);
 
     return (
         <main className="kanban-page theme-light">
@@ -817,14 +707,14 @@ export function App(): React.ReactElement {
                                 <h2>Nudges for {currentViewer}</h2>
                                 <button
                                     type="button"
-                                    onClick={(): void => {
-                                        setReadNudgeIds((current): Set<string> => {
-                                            const next = new Set(current);
-                                            for (const event of notificationsForViewer) {
-                                                next.add(event.id);
-                                            }
-                                            return next;
-                                        });
+                                    onClick={async (): Promise<void> => {
+                                        const unreadIds = notificationItems
+                                            .filter((item): boolean => item.unread)
+                                            .map((item): string => item.event.id);
+                                        if (unreadIds.length > 0) {
+                                            await markNudgesRead({ viewer: currentViewer, nudgeIds: unreadIds });
+                                            await refreshNotifications(currentViewer);
+                                        }
                                         setLastShortcutEvent(`Marked nudges as read (${currentViewer})`);
                                     }}
                                 >
@@ -839,9 +729,9 @@ export function App(): React.ReactElement {
                                         <button
                                             key={event.id}
                                             type="button"
-                                            className={`notification-item ${readNudgeIds.has(event.id) ? '' : 'is-unread'}`}
+                                            className={`notification-item ${notificationItems.find((item): boolean => item.event.id === event.id)?.unread ? 'is-unread' : ''}`}
                                             onClick={(): void => {
-                                                openIssueFromNotification(event);
+                                                void openIssueFromNotification(event);
                                             }}
                                         >
                                             <strong>{event.issueId}</strong>
@@ -1042,24 +932,22 @@ export function App(): React.ReactElement {
                                     setIsNudging(true);
                                     setNudgeFeedback('');
 
-                                    const result = await sendStatusNudge({
+                                    try {
+                                        const event = await nudgeIssueOwner({
                                         issueId: openedIssue.id,
-                                        issueTitle: openedIssue.title,
-                                        owner: openedIssue.owner,
-                                        requestedBy: 'Shashank',
+                                        requestedBy: currentViewer,
                                         channel: 'in_app'
                                     });
 
-                                    if (!result.ok) {
-                                        setNudgeFeedback(`Nudge failed: ${result.error}`);
-                                        setIsNudging(false);
-                                        return;
+                                        setLatestNudgeEvent(event);
+                                        await refreshIssueDetail(openedIssue.id);
+                                        await refreshNotifications(currentViewer);
+                                        setNudgeFeedback(`Nudge sent to @${event.owner} (in-app notification).`);
+                                        setLastShortcutEvent(`Nudged owner for status (${openedIssue.id})`);
+                                    } catch (error) {
+                                        const message = error instanceof Error ? error.message : 'unknown error';
+                                        setNudgeFeedback(`Nudge failed: ${message}`);
                                     }
-
-                                    setLatestNudgeEvent(result.event);
-                                    setNudgeAuditEvents(getNudgeAuditTrail());
-                                    setNudgeFeedback(`Nudge sent to @${result.event.owner} (in-app notification).`);
-                                    setLastShortcutEvent(`Nudged owner for status (${openedIssue.id})`);
                                     setIsNudging(false);
                                 }}
                                 disabled={isNudging}
@@ -1223,7 +1111,7 @@ export function App(): React.ReactElement {
                         </header>
                         <form
                             className="dialog-form"
-                            onSubmit={(event): void => {
+                            onSubmit={async (event): Promise<void> => {
                                 event.preventDefault();
                                 const title = newIssueTitle.trim();
                                 const owner = newIssueOwner.trim();
@@ -1232,14 +1120,11 @@ export function App(): React.ReactElement {
                                     return;
                                 }
 
-                                const nextIssue: Issue = {
-                                    id: getNextIssueId(issues),
+                                const nextIssue = await createIssueMutation({
                                     title,
-                                    owner: owner.length === 0 ? 'Unassigned' : owner,
-                                    status: 'todo'
-                                };
-
-                                setIssues((currentIssues): Issue[] => [nextIssue, ...currentIssues]);
+                                    owner: owner.length === 0 ? 'Unassigned' : owner
+                                });
+                                await refreshBoard();
                                 setSelectedIssueIds((current): Set<string> => {
                                     const next = new Set(current);
                                     next.add(nextIssue.id);
