@@ -9,13 +9,15 @@
         "typecheck": "tsc -p tsconfig.json --noEmit",
         "preview": "vite preview",
         "test:unit": "vitest run",
-        "test:unit:watch": "vitest"
+        "test:unit:watch": "vitest",
+        "test:e2e": "playwright test"
     },
     "dependencies": {
         "react": "^19.0.0",
         "react-dom": "^19.0.0"
     },
     "devDependencies": {
+        "@playwright/test": "^1.54.2",
         "@types/react": "^19.0.12",
         "@types/react-dom": "^19.0.4",
         "@vitejs/plugin-react": "^4.3.4",

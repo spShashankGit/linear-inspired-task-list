@@ -10,7 +10,12 @@ import type { SessionState } from './types.js';
 type CookieMap = Record<string, string>;
 
 const port = Number.parseInt(process.env.PORT ?? '4000', 10);
+const host = process.env.HOST ?? '127.0.0.1';
 const cookieSecret = process.env.SESSION_COOKIE_SECRET ?? 'change-me-in-prod';
+const allowedOrigins = (process.env.WEB_ORIGIN ?? 'http://127.0.0.1:5173,http://localhost:5173')
+    .split(',')
+    .map((item): string => item.trim())
+    .filter((item): boolean => item.length > 0);
 
 function parseCookies(header: string | null): CookieMap {
     if (!header) {
@@ -89,6 +94,10 @@ function resolveSessionFromRequest(request: IncomingMessage): {
 const yoga = createYoga({
     schema,
     graphqlEndpoint: '/graphql',
+    cors: {
+        origin: allowedOrigins,
+        credentials: true
+    },
     context: async ({ request }) => {
         const sessionId = request.headers.get('x-session-id') ?? crypto.randomUUID();
         const state = await loadSessionState(sessionId);
@@ -103,6 +112,19 @@ const yoga = createYoga({
 });
 
 const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+
+    if (request.method === 'GET' && request.url === '/healthz') {
+        response.statusCode = 200;
+        response.setHeader('Content-Type', 'application/json; charset=utf-8');
+        response.end(JSON.stringify({ ok: true, service: 'api' }));
+        return;
+    }
+
     const session = resolveSessionFromRequest(request);
     request.headers['x-session-id'] = session.sessionId;
 
@@ -113,9 +135,9 @@ const server = createServer((request: IncomingMessage, response: ServerResponse)
     yoga(request, response);
 });
 
-server.listen(port, () => {
+server.listen(port, host, () => {
     // eslint-disable-next-line no-console
-    console.log(`[api] GraphQL running on http://localhost:${port}/graphql`);
+    console.log(`[api] GraphQL running on http://${host}:${port}/graphql`);
 });
 
 setInterval(async () => {
