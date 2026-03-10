@@ -14,9 +14,6 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Show action runtime env
-        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=$FORCE_JAVASCRIPT_ACTIONS_TO_NODE24"
-
       - name: Checkout
         uses: actions/checkout@v4
 
